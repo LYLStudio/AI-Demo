@@ -66,13 +66,37 @@ public class StockInfoTool : ITool
                 ? msgArray.EnumerateArray().ToList()
                 : new List<JsonElement>();
 
-            if (items.Count > 0)
+            if (items.Count == 0)
             {
-                return new { symbol = normalizedSymbol, market = candidate, data = items.Select(item => item.Deserialize<Dictionary<string, JsonElement>>() ?? new Dictionary<string, JsonElement>()).ToList() };
+                continue;
+            }
+
+            var normalizedItems = items.Select(item => item.Deserialize<Dictionary<string, JsonElement>>() ?? new Dictionary<string, JsonElement>()).ToList();
+            if (HasCompanyName(normalizedItems))
+            {
+                return new { symbol = normalizedSymbol, market = candidate, data = normalizedItems };
             }
         }
 
         return new { symbol = normalizedSymbol, status = "not_found" };
+    }
+
+    private static bool HasCompanyName(IReadOnlyList<Dictionary<string, JsonElement>> items)
+    {
+        foreach (var item in items)
+        {
+            if (item.TryGetValue("n", out var name) && !string.IsNullOrWhiteSpace(name.GetString()))
+            {
+                return true;
+            }
+
+            if (item.TryGetValue("nf", out var fullName) && !string.IsNullOrWhiteSpace(fullName.GetString()))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private string[] BuildCandidates(string symbol, string? market)
