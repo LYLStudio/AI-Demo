@@ -10,7 +10,7 @@ namespace OllamaAgentDemo;
 
 class Program
 {
-    private const string ModelName = "gemma4:26b-mlx"; // 根據環境設定可能需要調整
+    private const string ModelName = "gpt-oss:20b";//"gemma4:26b-mlx"; // 根據環境設定可能需要調整
 
     static async Task Main(string[] args)
     {
@@ -43,7 +43,7 @@ class Program
 
 目前你可以使用的工具：
 - Calculator (用於數學運算)
-- StockInfo (用於查詢個股資訊，輸入格式為股票代號組合，例如 tse_2330.tw)
+- StockInfo (用於查詢個股資訊，請**僅提供股票代號數字**，例如: 2330。不需要加上市場前綴如 tse_ 或 otc_)
 
 當收到工具的回傳結果後，請根據該結果給出最終的自然語言回答。" }
         };

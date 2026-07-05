@@ -21,7 +21,16 @@ public class OllamaService : IOllamaService
 
     public async Task<OllamaResponse?> ChatAsync(string model, List<ChatMessage> history)
     {
-        var requestBody = new OllamaRequest { Model = model, Messages = history };
+        //var requestBody = new OllamaRequest { Model = model, Messages = history };
+
+        var requestBody = new OllamaRequest
+        {
+            Model = model,
+            Messages = history,
+            Stream = false,
+            Think = "high"                // 可選，若不設定會被忽略
+        };
+
         var jsonPayload = JsonSerializer.Serialize(requestBody);
         var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
