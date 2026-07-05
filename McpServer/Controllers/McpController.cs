@@ -36,7 +36,11 @@ public class McpController : ControllerBase
         _configuration = configuration;
     }
 
+    /// <summary>
+    /// 初始化 MCP server metadata 與 capabilities。
+    /// </summary>
     [HttpPost("initialize")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Initialize()
     {
         return Ok(new
@@ -48,13 +52,23 @@ public class McpController : ControllerBase
         });
     }
 
+    /// <summary>
+    /// 列出所有已註冊的工具定義。
+    /// </summary>
     [HttpGet("tools")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult ListTools()
     {
         return Ok(_toolRegistry.ListTools());
     }
 
+    /// <summary>
+    /// 依據指定工具 ID 執行工具呼叫並回傳執行結果。
+    /// </summary>
     [HttpPost("call")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Call([FromBody] CallToolRequest request, CancellationToken cancellationToken)
     {
         if (!ValidateApiKey())
@@ -71,7 +85,11 @@ public class McpController : ControllerBase
         return Ok(result);
     }
 
+    /// <summary>
+    /// 檢查 Ollama 與向量檢索組件的健康狀態。
+    /// </summary>
     [HttpGet("health")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> Health(CancellationToken cancellationToken)
     {
         var ollamaOk = await CheckOllamaAsync(cancellationToken);
@@ -90,7 +108,12 @@ public class McpController : ControllerBase
         return Ok(status);
     }
 
+    /// <summary>
+    /// 使用 RAG prompt 將使用者查詢送至 Ollama，並若模型回傳 tool call 則進行執行。
+    /// </summary>
     [HttpPost("chat")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Chat([FromBody] string query, CancellationToken cancellationToken)
     {
         if (!ValidateApiKey())

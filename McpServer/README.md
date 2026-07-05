@@ -19,6 +19,18 @@ dotnet restore
 DOTNET_ENVIRONMENT=Development dotnet run --project McpServer
 ```
 
+## Swagger / OpenAPI
+Once the server is running, open:
+- http://localhost:5000/swagger
+- http://localhost:5000/openapi/v1.json
+
+## Real Ollama usage
+Ensure the local Ollama service is running and the model is installed:
+```bash
+curl http://localhost:11434/api/tags
+ollama list
+```
+
 ## Ingest docs
 ```bash
 dotnet run --project McpServer -- ingest --source ./docs --type markdown
@@ -34,4 +46,13 @@ Set environment variables or edit appsettings.json:
 - Security__ApiKey
 - Ollama__BaseUrl
 - Ollama__Model
+- Ollama__UseMock
+- StockApi__BaseUrl
 - Audit__Path
+
+Example:
+```bash
+export Ollama__BaseUrl=http://localhost:11434
+export Ollama__Model=gemma4:31b-mlx
+export StockApi__BaseUrl=https://mis.twse.com.tw/stock/api/getStockInfo.jsp
+```

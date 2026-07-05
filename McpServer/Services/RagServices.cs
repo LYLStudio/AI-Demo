@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using McpServer.Interfaces;
 using McpServer.Models;
+using Microsoft.Extensions.Options;
 
 namespace McpServer.Services;
 
@@ -213,33 +214,34 @@ public class OllamaClient : ILLMAdapter
 {
     private readonly HttpClient _httpClient;
     private readonly string _baseUrl;
+    private readonly string _defaultModel;
 
-    public OllamaClient(HttpClient httpClient, IConfiguration configuration)
+    public OllamaClient(HttpClient httpClient, IOptions<OllamaSettings> options)
     {
         _httpClient = httpClient;
-        _baseUrl = configuration["Ollama:BaseUrl"] ?? "http://localhost:11434";
+        _baseUrl = options.Value.BaseUrl;
+        _defaultModel = options.Value.Model;
     }
 
     public async Task<string> GenerateAsync(string prompt, string? model = null, CancellationToken cancellationToken = default)
     {
-        try
+        var requestBody = new
         {
-            var requestBody = new
-            {
-                model = model ?? "gemma4:31b-mlx",
-                prompt,
-                stream = false
-            };
+            model = model ?? _defaultModel,
+            prompt,
+            stream = false
+        };
 
-            using var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/api/generate", requestBody, cancellationToken);
-            response.EnsureSuccessStatusCode();
-            var payload = await response.Content.ReadFromJsonAsync<Dictionary<string, object?>>(cancellationToken: cancellationToken);
-            return payload?.GetValueOrDefault("response")?.ToString() ?? "";
-        }
-        catch
+        using var response = await _httpClient.PostAsJsonAsync($"{_baseUrl}/api/generate", requestBody, cancellationToken);
+        if (!response.IsSuccessStatusCode)
         {
-            return "{\"action\":\"CALL_TOOL\",\"tool_id\":\"search_docs\",\"input\":{\"query\":\"mock response\"}}";
+            throw new InvalidOperationException($"Ollama request failed with status {(int)response.StatusCode}: {await response.Content.ReadAsStringAsync(cancellationToken)}");
         }
+
+        using var payload = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: cancellationToken);
+        return payload?.RootElement.TryGetProperty("response", out var responseElement) == true
+            ? responseElement.GetString() ?? string.Empty
+            : string.Empty;
     }
 }
 

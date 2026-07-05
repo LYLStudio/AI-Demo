@@ -1,12 +1,24 @@
 using McpServer.Infrastructure;
 using McpServer.Interfaces;
+using McpServer.Models;
 using McpServer.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    {
+        document.Info.Title = "McpServer API";
+        document.Info.Version = "v1";
+        document.Info.Description = "A .NET 10 MCP-style server with a RAG pipeline and local Ollama integration.";
+        return Task.CompletedTask;
+    });
+});
 builder.Services.AddControllers();
 builder.Services.AddHttpClient();
+builder.Services.Configure<OllamaSettings>(builder.Configuration.GetSection("Ollama"));
+builder.Services.Configure<StockApiSettings>(builder.Configuration.GetSection("StockApi"));
 
 builder.Services.AddSingleton<AuditLogger>();
 builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
@@ -14,6 +26,7 @@ builder.Services.AddSingleton<ITool, SearchDocsTool>();
 builder.Services.AddSingleton<ITool, ReadFileTool>();
 builder.Services.AddSingleton<ITool, HttpRequestTool>();
 builder.Services.AddSingleton<ITool, RunQueryTool>();
+builder.Services.AddSingleton<ITool, StockInfoTool>();
 builder.Services.AddSingleton<IChunker, SimpleChunker>();
 builder.Services.AddSingleton<IEmbedder, RandomEmbedder>();
 builder.Services.AddSingleton<IRetriever, InMemoryRetriever>();
@@ -28,8 +41,31 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.MapOpenApi("/openapi/{documentName}.json");
 }
+
+app.MapGet("/swagger", () => Results.Content("""
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>McpServer Swagger UI</title>
+    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
+  </head>
+  <body>
+    <div id="swagger-ui"></div>
+    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+    <script>
+      window.onload = () => {
+        SwaggerUIBundle({
+          url: '/openapi/v1.json',
+          dom_id: '#swagger-ui'
+        });
+      };
+    </script>
+  </body>
+</html>
+""", "text/html"));
 
 app.MapControllers();
 app.MapGet("/health", async (IConfiguration configuration, IRetriever retriever, ILLMAdapter llm, CancellationToken cancellationToken) =>
