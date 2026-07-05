@@ -12,13 +12,11 @@ namespace McpServer.Services;
 public class StockInfoTool : ITool
 {
     private readonly HttpClient _httpClient;
-    private readonly OllamaSettings _ollamaSettings;
     private readonly StockApiSettings _stockApiSettings;
 
-    public StockInfoTool(HttpClient httpClient, IOptions<OllamaSettings> ollamaSettings, IOptions<StockApiSettings> stockApiSettings)
+    public StockInfoTool(HttpClient httpClient, IOptions<StockApiSettings> stockApiSettings)
     {
         _httpClient = httpClient;
-        _ollamaSettings = ollamaSettings.Value;
         _stockApiSettings = stockApiSettings.Value;
     }
 

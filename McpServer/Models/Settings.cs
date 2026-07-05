@@ -6,7 +6,7 @@ namespace McpServer.Models;
 public class OllamaSettings
 {
     public string BaseUrl { get; set; } = "http://localhost:11434";
-    public string Model { get; set; } = "gemma4:31b-mlx";
+    public string Model { get; set; } = "gemma4:12b-mlx";
     public bool UseMock { get; set; } = false;
 }
 
