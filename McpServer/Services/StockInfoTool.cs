@@ -48,7 +48,7 @@ public class StockInfoTool : ITool
             return new { error = "A stock symbol is required." };
         }
 
-        var normalizedSymbol = symbol.Trim().ToLowerInvariant();
+        var normalizedSymbol = symbol.Trim().ToUpperInvariant();
         var candidates = BuildCandidates(normalizedSymbol, market);
 
         foreach (var candidate in candidates)

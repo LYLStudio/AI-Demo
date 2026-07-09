@@ -21,7 +21,7 @@ public class OllamaResponse
     public required DateTime CreatedAt { get; set; }
 
     [JsonPropertyName("message")]
-    public required ChatMessage Message { get; set; } = new();
+    public ChatMessage Message { get; set; } = new();
 
     [JsonPropertyName("done")]
     public bool Done { get; set; }

@@ -16,10 +16,10 @@ public class Function
     public int Index { get; set; }
 
     [JsonPropertyName("name")]
-    public required string Name { get; set; }  // e.g. "tool"
+    public string? Name { get; set; }  // e.g. "tool"
 
     [JsonPropertyName("arguments")]
-    public required ToolArguments Arguments { get; set; } = new();
+    public ToolArguments Arguments { get; set; } = new();
 }
 
 public class ToolArguments

@@ -66,6 +66,7 @@ public class McpController : ControllerBase
     /// 依據指定工具 ID 執行工具呼叫並回傳執行結果。
     /// </summary>
     [HttpPost("call")]
+    [Produces("application/json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]

@@ -71,8 +71,8 @@ foreach (var tool in tools)
 // 3. Create Chat Service
 using var chatService = new ChatService(chatConfig, toolRegistry);
 
-Console.WriteLine("AIConsole Raw HttpClient streaming demo (think=high)");
-Console.WriteLine("Type 'exit' or 'quit' to end the session.");
+Console.WriteLine("=== AIConsole Agent Mode ===");
+Console.WriteLine("輸入 'exit' 或 'quit' 來結束對話。");
 
 var cts = new CancellationTokenSource();
 Console.CancelKeyPress += (_, e) =>
@@ -85,7 +85,12 @@ try
 {
     var history = new List<ChatMessage>
     {
-        new ChatMessage("system", "You are a helpful assistant. Please always respond in Traditional Chinese (繁體中文).")
+        new ChatMessage("system", @"你是一個專業的 AI Agent。請始終使用繁體中文回答。
+當你需要使用工具來獲取資訊或進行運算時，你必須嚴格遵循以下邏輯：
+1. **思考優先**：首先在 <thinking> 標記中分析使用者目標、目前已知資訊以及缺少的資訊，並規劃明確的步驟。
+2. **工具驅動**：若需要外部資訊或執行特定功能，請呼叫對應的 MCP 工具。
+3. **禁止搶答**：在收到工具回傳結果之前，絕對不要嘗試給出最終答案或結論。即使你認為知道答案，也必須先透過工具驗證（如果適用）。
+4. **迭代推理**：收到工具結果後，將其視為新資訊，重新進入 <thinking> 階段分析是否已達成目標。若仍需更多資訊，請繼續調用工具；直到所有必要資訊均已齊全且邏輯自洽後，才輸出最終答案。")
     };
 
     while (true)
@@ -102,11 +107,6 @@ try
 
         history.Add(new ChatMessage("user", userInput));
 
-        if (await TryHandleStockQuery(userInput, toolRegistry, history, cts.Token))
-        {
-            continue;
-        }
-
         bool turnCompleted = false;
 
         while (!turnCompleted && !cts.IsCancellationRequested)
@@ -115,15 +115,25 @@ try
 
             await chatService.StreamChatAsync(history, cts.Token, (state, element) => 
             {
-                // Check for tool call in the current chunk
-                if (element.TryGetProperty("tool_call", out var tc))
+                // Check for tool call in the current chunk - check both root and inside 'message'
+                JsonElement? tcElement = null;
+                if (element.TryGetProperty("tool_call", out var rootTc))
+                {
+                    tcElement = rootTc;
+                }
+                else if (element.TryGetProperty("message", out var msg) && msg.TryGetProperty("tool_call", out var msgTc))
+                {
+                    tcElement = msgTc;
+                }
+
+                if (tcElement != null)
                 {
                     capturedToolCall = new ToolCall
                     {
-                        Name = tc.GetProperty("name").GetString() ?? "",
+                        Name = tcElement.Value.GetProperty("name").GetString() ?? "",
                         Arguments = new Dictionary<string, object>()
                     };
-                    if (tc.TryGetProperty("arguments", out var argsEl))
+                    if (tcElement.Value.TryGetProperty("arguments", out var argsEl))
                     {
                         foreach(var prop in argsEl.EnumerateObject())
                         {
@@ -135,7 +145,7 @@ try
                 ProcessChunkInternal(state, element, isThinkingEnabled);
             }, () => 
             {
-                Console.WriteLine("\n[Stream Ended]");
+                // Stream ended for this turn
             });
 
             if (capturedToolCall != null)
@@ -148,19 +158,25 @@ try
                     Console.ResetColor();
 
                     var result = await tool.ExecuteAsync(capturedToolCall.Arguments);
-                    history.Add(new ChatMessage("tool", result.Content));
+                    
+                    // 參考 OllamaAgentDemo，將工具結果以 'user' 身份加入紀錄，這能更有效觸發模型的後續推理與調用
+                    history.Add(new ChatMessage("user", $"[工具結果]: {result.Content}"));
+                    
+                    // The loop continues: AI will now process the tool result and decide next step
                 }
                 else
                 {
                     Console.ForegroundColor = ConsoleColor.Red;
                     Console.WriteLine($"\n[Error] Tool '{capturedToolCall.Name}' not found.");
                     Console.ResetColor();
-                    turnCompleted = true; 
+                    // 同樣使用 'user' 角色回報錯誤，確保模型能接收到錯誤訊息並決定如何應對
+                    history.Add(new ChatMessage("user", $"[工具錯誤]: 找不到名為 '{capturedToolCall.Name}' 的工具。"));
                 }
             }
             else
             {
-                turnCompleted = true; // No tool call, end the turn
+                // No tool call was captured in this stream, meaning the AI has finished its response
+                turnCompleted = true; 
             }
         }
     }
@@ -172,217 +188,6 @@ catch (OperationCanceledException)
 catch (Exception ex)
 {
     Console.WriteLine($"\nAn error occurred: {ex.Message}");
-}
-
-async Task<bool> TryHandleStockQuery(string userInput, ToolRegistry toolRegistry, List<ChatMessage> history, CancellationToken cancellationToken)
-{
-    var normalized = userInput.Trim();
-    if (string.IsNullOrWhiteSpace(normalized))
-    {
-        return false;
-    }
-
-    var intent = ParseStockQuery(normalized);
-    if (!intent.ShouldQuery || string.IsNullOrWhiteSpace(intent.Symbol))
-    {
-        return false;
-    }
-
-    var tool = toolRegistry.GetTool("stock_info");
-    if (tool == null)
-    {
-        Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine("\n[MCP] 未找到 stock_info 工具。請確認 McpServer 已註冊該工具。" );
-        Console.ResetColor();
-        return false;
-    }
-
-    Console.ForegroundColor = ConsoleColor.Yellow;
-    Console.WriteLine($"\n[工具呼叫]: stock_info(symbol={intent.Symbol})");
-    Console.ResetColor();
-
-    var result = await tool.ExecuteAsync(new Dictionary<string, object> { ["symbol"] = intent.Symbol });
-    Console.ForegroundColor = ConsoleColor.Green;
-    Console.WriteLine($"[工具結果] {result.Content}");
-    Console.ResetColor();
-    history.Add(new ChatMessage("tool", result.Content));
-
-    if (intent.IsPurchase && intent.Quantity.HasValue)
-    {
-        var parsed = TryExtractPriceAndName(result.Content);
-        if (parsed.Price.HasValue)
-        {
-            var shares = intent.Quantity.Value * 1000;
-            var total = parsed.Price.Value * shares;
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine($"[計算] {intent.Quantity.Value} 張 × 1000 股/張 × {parsed.Price.Value:F2} 元/股 = 約 {total:N0} 元（未含手續費與稅費）");
-            Console.ResetColor();
-            history.Add(new ChatMessage("assistant", $"以目前股價約 {parsed.Price.Value:F2} 元/股，買 {intent.Quantity.Value} 張（{shares:N0} 股）約需 {total:N0} 元，未含手續費與稅費。"));
-        }
-        else
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("[計算] 無法從股票查詢結果中取得價格，請稍後再試。");
-            Console.ResetColor();
-        }
-    }
-
-    return true;
-}
-
-static (bool ShouldQuery, string? Symbol, bool IsPurchase, int? Quantity) ParseStockQuery(string input)
-{
-    var normalized = input.Trim();
-    if (string.IsNullOrWhiteSpace(normalized))
-    {
-        return (false, null, false, null);
-    }
-
-    var hasStockIntent = normalized.Contains("股價", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("股票", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("台股", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("stock price", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("stock", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("買", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("購買", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("買入", StringComparison.OrdinalIgnoreCase);
-
-    if (!hasStockIntent)
-    {
-        return (false, null, false, null);
-    }
-
-    var codeMatch = Regex.Match(normalized, @"(?<!\d)(\d{4,5})(?!\d)");
-    var symbol = codeMatch.Success ? codeMatch.Groups[1].Value : null;
-
-    if (string.IsNullOrWhiteSpace(symbol))
-    {
-        var knownSymbols = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["台積電"] = "2330",
-            ["tsmc"] = "2330",
-            ["鴻海"] = "2317",
-            ["聯電"] = "2303",
-            ["世界先進"] = "5347"
-        };
-
-        foreach (var (name, knownSymbol) in knownSymbols)
-        {
-            if (normalized.Contains(name, StringComparison.OrdinalIgnoreCase))
-            {
-                symbol = knownSymbol;
-                break;
-            }
-        }
-    }
-
-    var quantity = ParseLotQuantity(normalized);
-    var isPurchase = (normalized.Contains("買", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("購買", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("買入", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("多少錢", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("總價", StringComparison.OrdinalIgnoreCase)
-        || normalized.Contains("價錢", StringComparison.OrdinalIgnoreCase))
-        && quantity.HasValue;
-
-    return (string.IsNullOrWhiteSpace(symbol) ? false : true, symbol, isPurchase, quantity);
-}
-
-static int? ParseLotQuantity(string input)
-{
-    var match = Regex.Match(input, @"(?<qty>[\d零一二三四五六七八九十]+)\s*張", RegexOptions.IgnoreCase);
-    if (match.Success)
-    {
-        return ParseChineseNumber(match.Groups["qty"].Value);
-    }
-
-    match = Regex.Match(input, @"(?:買|購買|買入)\s*(?<qty>[\d零一二三四五六七八九十]+)\s*張", RegexOptions.IgnoreCase);
-    if (match.Success)
-    {
-        return ParseChineseNumber(match.Groups["qty"].Value);
-    }
-
-    return null;
-}
-
-static int ParseChineseNumber(string input)
-{
-    if (int.TryParse(input, out var numeric))
-    {
-        return numeric;
-    }
-
-    var mapping = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
-    {
-        ["零"] = 0,
-        ["一"] = 1,
-        ["二"] = 2,
-        ["兩"] = 2,
-        ["三"] = 3,
-        ["四"] = 4,
-        ["五"] = 5,
-        ["六"] = 6,
-        ["七"] = 7,
-        ["八"] = 8,
-        ["九"] = 9,
-        ["十"] = 10
-    };
-
-    return mapping.TryGetValue(input, out var value) ? value : 0;
-}
-
-static (decimal? Price, string? CompanyName) TryExtractPriceAndName(string content)
-{
-    try
-    {
-        using var doc = JsonDocument.Parse(content);
-        if (!doc.RootElement.TryGetProperty("result", out var resultElement))
-        {
-            return (null, null);
-        }
-
-        if (!resultElement.TryGetProperty("data", out var dataElement) || dataElement.ValueKind != JsonValueKind.Array)
-        {
-            return (null, null);
-        }
-
-        foreach (var item in dataElement.EnumerateArray())
-        {
-            if (item.ValueKind != JsonValueKind.Object)
-            {
-                continue;
-            }
-
-            decimal? price = null;
-            if (item.TryGetProperty("z", out var priceElement) && priceElement.ValueKind == JsonValueKind.String)
-            {
-                decimal.TryParse(priceElement.GetString(), out var parsedPrice);
-                price = parsedPrice;
-            }
-            else if (item.TryGetProperty("z", out var priceNumericElement) && priceNumericElement.ValueKind == JsonValueKind.Number)
-            {
-                price = priceNumericElement.GetDecimal();
-            }
-
-            string? companyName = null;
-            if (item.TryGetProperty("n", out var nameElement) && nameElement.ValueKind == JsonValueKind.String)
-            {
-                companyName = nameElement.GetString();
-            }
-            if (string.IsNullOrWhiteSpace(companyName) && item.TryGetProperty("nf", out var fullNameElement) && fullNameElement.ValueKind == JsonValueKind.String)
-            {
-                companyName = fullNameElement.GetString();
-            }
-
-            return (price, companyName);
-        }
-    }
-    catch
-    {
-        return (null, null);
-    }
-
-    return (null, null);
 }
 
 void ProcessChunkInternal(StreamState state, JsonElement root, bool isThinkingEnabled)

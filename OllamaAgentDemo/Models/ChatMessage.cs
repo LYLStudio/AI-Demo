@@ -5,10 +5,10 @@ namespace OllamaAgentDemo.Models;
 public class ChatMessage
 {
     [JsonPropertyName("role")]
-    public required string Role { get; set; }        // "assistant" / "user" ...
+    public string? Role { get; set; }        // "assistant" / "user" ...
 
     [JsonPropertyName("content")]
-    public required string Content { get; set; }
+    public string? Content { get; set; }
 
     // 這個欄位只會在「思考」階段出現
     [JsonPropertyName("thinking")]
