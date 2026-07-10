@@ -12,7 +12,7 @@ public class AuditLogger
 
     public AuditLogger(IConfiguration configuration)
     {
-        _logPath = configuration["Audit:Path"] ?? Path.Combine(AppContext.BaseDirectory, "logs", "audit.log");
+        _logPath = configuration["Audit:Path"] ?? Path.Combine(AppContext.BaseDirectory, "logs", $"audit_{DateTime.Now:yyyy-MM-dd}.log");
         Directory.CreateDirectory(Path.GetDirectoryName(_logPath)!);
     }
 

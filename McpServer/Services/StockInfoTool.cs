@@ -1,4 +1,4 @@
-using System.Net.Http.Json;
+using System.Text;
 using System.Text.Json;
 using McpServer.Interfaces;
 using McpServer.Models;
@@ -66,43 +66,48 @@ public class StockInfoTool : ITool
             {
                 continue;
             }
-            if(HasCompanyName(items))
+            if (HasCompanyName(items))
             {
-                return new { symbol = normalizedSymbol, market = candidate, data = items.Select(x => new
+                return new
                 {
-                    x.ChannelId,
-                    x.Name,
-                    x.FullName,
-                    x.Open,
-                    x.High,
-                    x.Low,
-                    x.Volume,
-                    x.YesterdayClose,
-                    x.LimitUp,
-                    x.LimitDown,
-                    x.Time,
-                    TimeInMillisecond = x.Tlong,
-                    x.Close,
-                    Price = x.Close,
-                    PauseOrDelayFlag = x.P,
-                    x.InfoType,
-                    x.InfoIndex,
-                    TradeTypeFlag = x.Mt,
-                    SpecialFlag =x.Ip,
-                    x.BestAskPrices,
-                    x.BestAskVolumes,
-                    x.BestBidPrices,
-                    x.BestBidVolumes,
-                    x.Ps,
-                    x.Pz,
-                    x.Bp,
-                    x.Code,
-                    x.Date,
-                    x.DateSnapshot,
-                    MarketType = x.Exchange,
-                    x.Key,
-                    MarketCapSharePercent = x.MPercent
-                }) };
+                    symbol = normalizedSymbol,
+                    market = candidate,
+                    data = items.Select(x => new
+                    {
+                        x.ChannelId,
+                        Name = $"base64|{Convert.ToBase64String(Encoding.UTF8.GetBytes($"{x.Name}"))}|base64",
+                        FullName = $"base64|{Convert.ToBase64String(Encoding.UTF8.GetBytes($"{x.FullName}"))}|base64",
+                        x.Open,
+                        x.High,
+                        x.Low,
+                        x.Volume,
+                        x.YesterdayClose,
+                        x.LimitUp,
+                        x.LimitDown,
+                        x.Time,
+                        TimeInMillisecond = x.Tlong,
+                        x.Close,
+                        Price = x.Close,
+                        PauseOrDelayFlag = x.P,
+                        x.InfoType,
+                        x.InfoIndex,
+                        TradeTypeFlag = x.Mt,
+                        SpecialFlag = x.Ip,
+                        x.BestAskPrices,
+                        x.BestAskVolumes,
+                        x.BestBidPrices,
+                        x.BestBidVolumes,
+                        x.Ps,
+                        x.Pz,
+                        x.Bp,
+                        x.Code,
+                        x.Date,
+                        x.DateSnapshot,
+                        MarketType = x.Exchange,
+                        x.Key,
+                        MarketCapSharePercent = x.MPercent
+                    })
+                };
             }
         }
 

@@ -28,7 +28,7 @@ public class OllamaService : IOllamaService
             Model = model,
             Messages = history,
             Stream = false,
-            Think = "high"                // 可選，若不設定會被忽略
+            Think = "low"                // 可選，若不設定會被忽略
         };
 
         var jsonPayload = JsonSerializer.Serialize(requestBody);

@@ -69,7 +69,9 @@ public class McpTool : ITool
       }
 
       // 將 Result 物件序列化為 JSON 字串回傳給 Agent
-      return JsonSerializer.Serialize(resultResponse.Result, new JsonSerializerOptions { WriteIndented = false });
+      var resultSerialized = JsonSerializer.Serialize(resultResponse.Result, new JsonSerializerOptions { WriteIndented = false, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+      var resultSerializedDecoded = Base64Restorer.Restore(resultSerialized); // 將 Base64 編碼的內容還原為 UTF-8 字元  
+      return resultSerializedDecoded;
     }
     catch (Exception ex)
     {

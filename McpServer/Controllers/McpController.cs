@@ -1,5 +1,3 @@
-using System.Net.Http.Headers;
-using System.Text.Json;
 using McpServer.Interfaces;
 using McpServer.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -40,6 +38,7 @@ public class McpController : ControllerBase
     /// 初始化 MCP server metadata 與 capabilities。
     /// </summary>
     [HttpPost("initialize")]
+    [Produces("application/json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult Initialize()
     {
@@ -56,6 +55,7 @@ public class McpController : ControllerBase
     /// 列出所有已註冊的工具定義。
     /// </summary>
     [HttpGet("tools")]
+    [Produces("application/json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public IActionResult ListTools()
     {
@@ -90,6 +90,7 @@ public class McpController : ControllerBase
     /// 檢查 Ollama 與向量檢索組件的健康狀態。
     /// </summary>
     [HttpGet("health")]
+    [Produces("application/json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     public async Task<IActionResult> Health(CancellationToken cancellationToken)
     {
@@ -113,6 +114,7 @@ public class McpController : ControllerBase
     /// 使用 RAG prompt 將使用者查詢送至 Ollama，並若模型回傳 tool call 則進行執行。
     /// </summary>
     [HttpPost("chat")]
+    [Produces("application/json")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     public async Task<IActionResult> Chat([FromBody] string query, CancellationToken cancellationToken)
@@ -152,7 +154,7 @@ public class McpController : ControllerBase
         try
         {
             using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var baseUrl = _configuration["Ollama:BaseUrl"] ?? "http://localhost:11434";
+            var baseUrl = _configuration["Ollama:BaseUrl"];
             using var response = await client.GetAsync($"{baseUrl}/api/tags", cancellationToken);
             return response.IsSuccessStatusCode;
         }
