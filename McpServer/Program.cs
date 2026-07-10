@@ -22,6 +22,7 @@ builder.Services.Configure<StockApiSettings>(builder.Configuration.GetSection("S
 
 builder.Services.AddSingleton<AuditLogger>();
 builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
+builder.Services.AddSingleton<ITool, CalculatorTool>();
 builder.Services.AddSingleton<ITool, SearchDocsTool>();
 builder.Services.AddSingleton<ITool, ReadFileTool>();
 builder.Services.AddSingleton<ITool, HttpRequestTool>();

@@ -16,7 +16,15 @@ public class AgentService : IAgentService
     public AgentService(IOllamaService ollamaService, IEnumerable<ITool> tools)
     {
         _ollamaService = ollamaService;
-        _tools = tools.ToDictionary(t => t.Name);
+        var dict = new Dictionary<string, ITool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var tool in tools)
+        {
+            if (!dict.ContainsKey(tool.Name))
+            {
+                dict.Add(tool.Name, tool);
+            }
+        }
+        _tools = dict;
     }
 
     public async Task RunConversationAsync(List<ChatMessage> history, string model)
@@ -33,7 +41,7 @@ public class AgentService : IAgentService
             // 檢查最後一則訊息是否包含 tool call
             // 預期格式: "ToolName: argument"
             var lastMessage = response.Message.Content;
-            var match = Regex.Match(lastMessage, @"^(\w+):\s*(.*)$", RegexOptions.Multiline);
+            var match = Regex.Match($"{lastMessage}", @"^(\w+):\s*(.*)$", RegexOptions.Multiline);
 
             if (match.Success)
             {
