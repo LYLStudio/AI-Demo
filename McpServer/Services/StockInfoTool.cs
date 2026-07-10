@@ -59,41 +59,62 @@ public class StockInfoTool : ITool
                 continue;
             }
 
-            var payload = await response.Content.ReadFromJsonAsync<JsonDocument>(cancellationToken: cancellationToken);
-            var items = payload?.RootElement.TryGetProperty("msgArray", out var msgArray) == true
-                ? msgArray.EnumerateArray().ToList()
-                : new List<JsonElement>();
+            var payload = await response.Content.ReadFromJsonAsync<StockInfoResponse>(cancellationToken: cancellationToken);
 
+            var items = payload?.MsgArray ?? new List<StockMessage>();
             if (items.Count == 0)
             {
                 continue;
             }
-
-            var normalizedItems = items.Select(item => item.Deserialize<Dictionary<string, JsonElement>>() ?? new Dictionary<string, JsonElement>()).ToList();
-            if (HasCompanyName(normalizedItems))
+            if(HasCompanyName(items))
             {
-                return new { symbol = normalizedSymbol, market = candidate, data = normalizedItems };
+                return new { symbol = normalizedSymbol, market = candidate, data = items.Select(x => new
+                {
+                    x.ChannelId,
+                    x.Name,
+                    x.FullName,
+                    x.Open,
+                    x.High,
+                    x.Low,
+                    x.Volume,
+                    x.YesterdayClose,
+                    x.LimitUp,
+                    x.LimitDown,
+                    x.Time,
+                    TimeInMillisecond = x.Tlong,
+                    x.Close,
+                    Price = x.Close,
+                    PauseOrDelayFlag = x.P,
+                    x.InfoType,
+                    x.InfoIndex,
+                    TradeTypeFlag = x.Mt,
+                    SpecialFlag =x.Ip,
+                    x.BestAskPrices,
+                    x.BestAskVolumes,
+                    x.BestBidPrices,
+                    x.BestBidVolumes,
+                    x.Ps,
+                    x.Pz,
+                    x.Bp,
+                    x.Code,
+                    x.Date,
+                    x.DateSnapshot,
+                    MarketType = x.Exchange,
+                    x.Key,
+                    MarketCapSharePercent = x.MPercent
+                }) };
             }
         }
 
         return new { symbol = normalizedSymbol, status = "not_found" };
     }
 
-    private static bool HasCompanyName(IReadOnlyList<Dictionary<string, JsonElement>> items)
+    private static bool HasCompanyName(IReadOnlyList<StockMessage> items)
     {
         foreach (var item in items)
         {
-            if (item.TryGetValue("n", out var name) && !string.IsNullOrWhiteSpace(name.GetString()))
-            {
-                return true;
-            }
-
-            if (item.TryGetValue("nf", out var fullName) && !string.IsNullOrWhiteSpace(fullName.GetString()))
-            {
-                return true;
-            }
+            return !string.IsNullOrWhiteSpace(item.Name) || !string.IsNullOrWhiteSpace(item.FullName);
         }
-
         return false;
     }
 

@@ -44,7 +44,7 @@ public class AgentService : IAgentService
                 {
                     Console.WriteLine($"[Agent] 正在呼叫工具: {toolName} (參數: {argument})");
                     string result = await tool.ExecuteAsync(argument);
-                    
+
                     // 將工具結果以使用者身份加入歷史紀錄，以便模型下次處理
                     history.Add(new ChatMessage { Role = "user", Content = result });
                 }
