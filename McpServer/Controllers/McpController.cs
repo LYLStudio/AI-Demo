@@ -1,3 +1,6 @@
+using System.Diagnostics;
+using System.Text.Json;
+using McpServer.Infrastructure;
 using McpServer.Interfaces;
 using McpServer.Models;
 using Microsoft.AspNetCore.Mvc;
@@ -5,175 +8,233 @@ using Microsoft.AspNetCore.Mvc;
 namespace McpServer.Controllers;
 
 /// <summary>
-/// 提供 MCP 風格端點，支援初始化、工具列舉、工具呼叫與健康檢查。
+/// MCP (Model Context Protocol) JSON-RPC 2.0 compliant endpoint.
+/// All communication goes through POST /mcp with a "method" field.
 /// </summary>
 [ApiController]
 [Route("mcp")]
 public class McpController : ControllerBase
 {
     private readonly IToolRegistry _toolRegistry;
-    private readonly ILLMAdapter _llmAdapter;
-    private readonly IRetriever _retriever;
-    private readonly IContextBuilder _contextBuilder;
-    private readonly IPostProcessor _postProcessor;
     private readonly IConfiguration _configuration;
+    private readonly AuditLogger _auditLogger;
 
     public McpController(
         IToolRegistry toolRegistry,
-        ILLMAdapter llmAdapter,
-        IRetriever retriever,
-        IContextBuilder contextBuilder,
-        IPostProcessor postProcessor,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        AuditLogger auditLogger)
     {
         _toolRegistry = toolRegistry;
-        _llmAdapter = llmAdapter;
-        _retriever = retriever;
-        _contextBuilder = contextBuilder;
-        _postProcessor = postProcessor;
         _configuration = configuration;
+        _auditLogger = auditLogger;
     }
 
     /// <summary>
-    /// 初始化 MCP server metadata 與 capabilities。
+    /// MCP JSON-RPC endpoint. All methods are routed through this single POST endpoint.
+    /// Supported methods: initialize, tools/list, tools/call
     /// </summary>
-    [HttpPost("initialize")]
+    [HttpPost]
+    [Consumes("application/json")]
     [Produces("application/json")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult Initialize()
+    public async Task<IActionResult> McpEndpoint()
     {
-        return Ok(new
+        string? rawBody;
+        using (var reader = new StreamReader(Request.Body))
         {
-            server = "McpServer",
-            version = "1.0.0",
-            metadata = new { protocol = "mcp", model = _configuration["Ollama:Model"] ?? "gemma4:31b-mlx" },
-            capabilities = new { tools = true, rag = true, health = true }
-        });
-    }
-
-    /// <summary>
-    /// 列出所有已註冊的工具定義。
-    /// </summary>
-    [HttpGet("tools")]
-    [Produces("application/json")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public IActionResult ListTools()
-    {
-        return Ok(_toolRegistry.ListTools());
-    }
-
-    /// <summary>
-    /// 依據指定工具 ID 執行工具呼叫並回傳執行結果。
-    /// </summary>
-    [HttpPost("call")]
-    [Produces("application/json")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status400BadRequest)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Call([FromBody] CallToolRequest request, CancellationToken cancellationToken)
-    {
-        if (!ValidateApiKey())
-        {
-            return Unauthorized(new { error = "Missing or invalid API key." });
+            rawBody = await reader.ReadToEndAsync();
         }
 
-        if (string.IsNullOrWhiteSpace(request.ToolId))
+        if (string.IsNullOrWhiteSpace(rawBody))
         {
-            return BadRequest(new { error = "ToolId is required." });
+            return Ok(McpErrorResponse.From(null, -32700, "Parse error: Invalid JSON.", null));
         }
 
-        var result = await _toolRegistry.ExecuteAsync(request.ToolId, request.Input, request.User, cancellationToken);
-        return Ok(result);
-    }
-
-    /// <summary>
-    /// 檢查 Ollama 與向量檢索組件的健康狀態。
-    /// </summary>
-    [HttpGet("health")]
-    [Produces("application/json")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    public async Task<IActionResult> Health(CancellationToken cancellationToken)
-    {
-        var ollamaOk = await CheckOllamaAsync(cancellationToken);
-        var vectorOk = await CheckVectorStoreAsync(cancellationToken);
-        var status = new HealthStatus
+        try
         {
-            Status = ollamaOk && vectorOk ? "ok" : "degraded",
-            Components = new Dictionary<string, object?>
+            using var doc = JsonDocument.Parse(rawBody);
+            var root = doc.RootElement;
+
+            // Must be a valid JSON-RPC request (jsonrpc must be "2.0")
+            if (!TryGetStringProperty(root, "jsonrpc", out var jsonrpcVersion) || jsonrpcVersion != "2.0")
             {
-                ["ollama"] = ollamaOk,
-                ["vector_db"] = vectorOk,
-                ["api_key"] = !string.IsNullOrWhiteSpace(_configuration["Security:ApiKey"])
+                return Ok(McpErrorResponse.From(ExtractId(root), -32600, "Invalid Request", null));
             }
-        };
 
-        return Ok(status);
-    }
+            // method is required
+            if (!TryGetStringProperty(root, "method", out var method))
+            {
+                return Ok(McpErrorResponse.From(ExtractId(root), -32600, "Method not found", null));
+            }
 
-    /// <summary>
-    /// 使用 RAG prompt 將使用者查詢送至 Ollama，並若模型回傳 tool call 則進行執行。
-    /// </summary>
-    [HttpPost("chat")]
-    [Produces("application/json")]
-    [ProducesResponseType(StatusCodes.Status200OK)]
-    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
-    public async Task<IActionResult> Chat([FromBody] string query, CancellationToken cancellationToken)
-    {
-        if (!ValidateApiKey())
-        {
-            return Unauthorized(new { error = "Missing or invalid API key." });
+            object? reqId = ExtractIdForResponse(root);
+            JsonElement? paramsElem = TryGetParams(root);
+
+            return method switch
+            {
+                "initialize" => await HandleInitializeAsync(reqId, paramsElem),
+                "tools/list" => HandleListTools(reqId),
+                "tools/call" => await HandleCallTool(paramsElem, reqId),
+                _ => Ok(McpErrorResponse.From(reqId, -32601, $"Method not found: {method}", null))
+            };
         }
-
-        var chunks = await _retriever.SearchAsync(query, 5, cancellationToken);
-        var prompt = _contextBuilder.BuildPrompt(query, chunks);
-        var llmResponse = await _llmAdapter.GenerateAsync(prompt, _configuration["Ollama:Model"], cancellationToken);
-        var result = await _postProcessor.ProcessAsync(llmResponse, "user", cancellationToken);
-        return Ok(new { prompt, llmResponse, result });
+        catch (JsonException)
+        {
+            return Ok(McpErrorResponse.From(null, -32700, "Parse error: Invalid JSON.", null));
+        }
+        catch (Exception ex)
+        {
+            return Ok(McpErrorResponse.From(null, -32603, "Internal error", new { error = ex.Message }));
+        }
     }
 
-    private bool ValidateApiKey()
+    // --- helpers ---
+
+    private static bool TryGetStringProperty(JsonElement element, string propertyName, out string? value)
     {
-        var expectedApiKey = _configuration["Security:ApiKey"];
-        if (string.IsNullOrWhiteSpace(expectedApiKey))
+        if (element.TryGetProperty(propertyName, out var prop) && prop.ValueKind == JsonValueKind.String)
         {
+            value = prop.GetString();
             return true;
         }
 
-        if (!Request.Headers.TryGetValue("Authorization", out var values))
-        {
-            return false;
-        }
-
-        var header = values.ToString();
-        return header.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-            && header["Bearer ".Length..].Equals(expectedApiKey, StringComparison.Ordinal);
+        value = null;
+        return false;
     }
 
-    private async Task<bool> CheckOllamaAsync(CancellationToken cancellationToken)
+    private static JsonElement? TryGetParams(JsonElement root)
     {
-        try
+        if (root.TryGetProperty("params", out var prop) && prop.ValueKind != JsonValueKind.Null)
         {
-            using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-            var baseUrl = _configuration["Ollama:BaseUrl"];
-            using var response = await client.GetAsync($"{baseUrl}/api/tags", cancellationToken);
-            return response.IsSuccessStatusCode;
+            return prop;
         }
-        catch
-        {
-            return false;
-        }
+        return null;
     }
 
-    private async Task<bool> CheckVectorStoreAsync(CancellationToken cancellationToken)
+    private static object? ExtractId(JsonElement root)
     {
-        try
+        if (root.TryGetProperty("id", out var idProp))
         {
-            await _retriever.SearchAsync("health", 1, cancellationToken);
-            return true;
+            return idProp.ValueKind == JsonValueKind.Null ? null : idProp.GetRawText();
         }
-        catch
+        return null;
+    }
+
+    private static object? ExtractIdForResponse(JsonElement root)
+    {
+        if (root.TryGetProperty("id", out var idProp))
         {
-            return false;
+            return idProp.ValueKind == JsonValueKind.Null ? null : idProp.GetRawText();
+        }
+        return null;
+    }
+
+    // --- method handlers ---
+
+    private IActionResult HandleInitialize(object? reqId)
+    {
+        return Ok(McpResponse.Ok(reqId, new InitializeResponse()));
+    }
+    
+    private async Task<IActionResult> HandleInitializeAsync(object? reqId, JsonElement? paramsElem)
+    {
+        var response = new InitializeResponse();
+        
+        // Log client info if provided for debugging/auditing
+        if (paramsElem is not null && paramsElem.Value.TryGetProperty("clientInfo", out var clientInfo) && 
+            clientInfo.ValueKind == JsonValueKind.Object)
+        {
+            var clientName = clientInfo.GetProperty("name").GetString() ?? "unknown";
+            var clientVersion = clientInfo.TryGetProperty("version", out var versionProp) 
+                ? versionProp.GetString() ?? "unknown" 
+                : "unknown";
+            
+            _auditLogger.Write("initialize", null, 
+                new { clientName, clientVersion }, 
+                "client_connected", 
+                new { protocolVersion = response.ProtocolVersion });
+        }
+
+        return Ok(McpResponse.Ok(reqId, response));
+    }
+
+    private IActionResult HandleListTools(object? reqId)
+    {
+        var tools = _toolRegistry.ListTools().Select(t => new
+        {
+            name = t.Id,
+            description = t.Description,
+            inputSchema = NormalizeSchema(t.Schema)
+        }).ToList();
+
+        return Ok(McpResponse.Ok(reqId, new { tools }));
+    }
+
+    private static object NormalizeSchema(Dictionary<string, object?>? schema)
+    {
+        if (schema is null || (!schema.ContainsKey("type") && !schema.ContainsKey("properties")))
+        {
+            return new { type = "object", properties = new Dictionary<string, object>() };
+        }
+
+        // Ensure type is set
+        if (!schema.ContainsKey("type"))
+        {
+            schema["type"] = "object";
+        }
+        if (!schema.ContainsKey("properties"))
+        {
+            schema["properties"] = new Dictionary<string, object>();
+        }
+        return schema;
+    }
+
+    private async Task<IActionResult> HandleCallTool(JsonElement? paramsElem, object? reqId)
+    {
+        if (paramsElem is null || paramsElem.Value.ValueKind != JsonValueKind.Object)
+        {
+            return Ok(McpErrorResponse.From(reqId, -32602, "Invalid params", new { error = "Params must be an object with 'name' and 'arguments'." }));
+        }
+
+        var p = paramsElem.Value;
+
+        if (!TryGetStringProperty(p, "name", out var toolName) || string.IsNullOrEmpty(toolName))
+        {
+            return Ok(McpErrorResponse.From(reqId, -32602, "Invalid params", new { error = "Missing 'name' field." }));
+        }
+
+        if (!p.TryGetProperty("arguments", out var argsProp) || argsProp.ValueKind != JsonValueKind.Object)
+        {
+            return Ok(McpErrorResponse.From(reqId, -32602, "Invalid params", new { error = "Missing or invalid 'arguments' field." }));
+        }
+
+        var jsonDoc = JsonDocument.Parse(argsProp.GetRawText());
+        var inputElement = jsonDoc.Deserialize<JsonElement?>();
+
+        var result = await _toolRegistry.ExecuteAsync(toolName, inputElement, user: null, HttpContext?.RequestAborted ?? default);
+
+        if (result.Success)
+        {
+            // Standardize tool result as MCP content format
+            var contentText = result.Result switch
+            {
+                string str => str,
+                object obj => JsonSerializer.Serialize(obj),
+                _ => ""
+            };
+
+            return Ok(McpResponse.Ok(reqId, new
+            {
+                content = new[] { new { type = "text", text = contentText } }
+            }));
+        }
+        else
+        {
+            // Standardize error response per JSON-RPC 2.0 spec
+            return Ok(McpErrorResponse.From(reqId, -32603, $"Tool execution error: {result.ToolId}", new { 
+                tool_id = result.ToolId, 
+                message = result.Error,
+                details = result.Details 
+            }));
         }
     }
 }

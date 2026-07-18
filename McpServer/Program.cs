@@ -16,9 +16,25 @@ builder.Services.AddOpenApi(options =>
     });
 });
 builder.Services.AddControllers();
-builder.Services.AddHttpClient();
+builder.Services.AddHttpClient(); // Use IHttpClientFactory for proper HttpClient management
+
 builder.Services.Configure<OllamaSettings>(builder.Configuration.GetSection("Ollama"));
 builder.Services.Configure<StockApiSettings>(builder.Configuration.GetSection("StockApi"));
+
+// Validate critical configuration on startup
+var ollamaConfig = builder.Configuration.GetSection("Ollama").Get<OllamaSettings>();
+if (string.IsNullOrWhiteSpace(ollamaConfig?.BaseUrl))
+{
+    Console.Error.WriteLine("[ERROR] Ollama:BaseUrl is required in appsettings.json");
+    Environment.Exit(1);
+}
+
+var stockApiConfig = builder.Configuration.GetSection("StockApi").Get<StockApiSettings>();
+if (string.IsNullOrWhiteSpace(stockApiConfig?.BaseUrl))
+{
+    Console.Error.WriteLine("[ERROR] StockApi:BaseUrl is required in appsettings.json");
+    Environment.Exit(1);
+}
 
 builder.Services.AddSingleton<AuditLogger>();
 builder.Services.AddSingleton<IToolRegistry, ToolRegistry>();
@@ -45,44 +61,61 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi("/openapi/{documentName}.json");
 }
 
-app.MapGet("/swagger", () => Results.Content("""
-<!doctype html>
-<html>
-  <head>
-    <meta charset="utf-8" />
-    <title>McpServer Swagger UI</title>
-    <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
-  </head>
-  <body>
-    <div id="swagger-ui"></div>
-    <script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-    <script>
-      window.onload = () => {
-        SwaggerUIBundle({
-          url: '/openapi/v1.json',
-          dom_id: '#swagger-ui'
-        });
-      };
-    </script>
-  </body>
-</html>
-""", "text/html"));
+// Request size limit to prevent DoS via huge payloads
+app.Use(async (context, next) =>
+{
+    context.Request.EnableBuffering();
+    if (context.Request.ContentLength > 10 * 1024 * 1024) // 10MB limit
+    {
+        context.Response.StatusCode = 413;
+        await context.Response.WriteAsync("Request too large");
+        return;
+    }
+    context.Request.Body.Position = 0; // Reset for downstream reads
+    await next();
+});
 
+// Map all [Controller] routes (including /mcp)
 app.MapControllers();
+
+// Legacy health check endpoint (for convenience) - improved with granular checks
 app.MapGet("/health", async (IConfiguration configuration, IRetriever retriever, ILLMAdapter llm, CancellationToken cancellationToken) =>
 {
+    var components = new Dictionary<string, bool>();
+    
+    // Check retriever health
     try
     {
         await retriever.SearchAsync("health", 1, cancellationToken);
-        var response = await llm.GenerateAsync("health", configuration["Ollama:Model"], cancellationToken);
-        return Results.Ok(new { status = "ok", response });
+        components["retriever"] = true;
     }
-    catch (Exception ex)
+    catch
     {
-        return Results.Ok(new { status = "degraded", error = ex.Message });
+        components["retriever"] = false;
     }
+
+    // Check Ollama LLM health
+    try
+    {
+        await llm.GenerateAsync("health", configuration["Ollama:Model"], cancellationToken);
+        components["ollama"] = true;
+    }
+    catch
+    {
+        components["ollama"] = false;
+    }
+
+    var allHealthy = components.Values.All(v => v);
+    
+    return Results.Ok(new 
+    { 
+        status = allHealthy ? "healthy" : "degraded", 
+        timestamp = DateTimeOffset.UtcNow.ToString("O"),
+        components 
+    });
 });
 
+// CLI ingest command (legacy convenience)
 if (args.Length > 0 && args[0].Equals("ingest", StringComparison.OrdinalIgnoreCase))
 {
     var sourceIndex = Array.FindIndex(args, arg => arg.Equals("--source", StringComparison.OrdinalIgnoreCase));

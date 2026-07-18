@@ -10,7 +10,7 @@ public class StockInfoResponse
     public string? Referer { get; set; }
 
     [JsonPropertyName("userDelay")]
-    public int UserDelay { get; set; }
+    public int? UserDelay { get; set; }
 
     [JsonPropertyName("rtcode")]
     public string? RtCode { get; set; }
@@ -49,9 +49,9 @@ public class QueryTimeInfo
     public bool ShowChart { get; set; }
 
     [JsonPropertyName("sessionFromTime")]
-    public int SessionFromTime { get; set; }
+        public int? SessionFromTime { get; set; }
 
-    [JsonPropertyName("sessionLatestTime")]
+        [JsonPropertyName("sessionLatestTime")]
     public int SessionLatestTime { get; set; }
 }
 

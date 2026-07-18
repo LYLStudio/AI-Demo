@@ -9,6 +9,7 @@ namespace McpServer.Infrastructure;
 public class AuditLogger
 {
     private readonly string _logPath;
+    private readonly object _writeLock = new();
 
     public AuditLogger(IConfiguration configuration)
     {
@@ -20,7 +21,7 @@ public class AuditLogger
     {
         var entry = new
         {
-            timestamp = DateTimeOffset.UtcNow,
+            timestamp = DateTimeOffset.UtcNow.ToString("O"),
             tool_id = toolId,
             user = user ?? "anonymous",
             input = Mask(input),
@@ -28,7 +29,21 @@ public class AuditLogger
             result = result
         };
 
-        File.AppendAllText(_logPath, JsonSerializer.Serialize(entry) + Environment.NewLine);
+        var jsonLine = JsonSerializer.Serialize(entry) + Environment.NewLine;
+        
+        // Thread-safe write with lock to prevent corruption from concurrent access
+        lock (_writeLock)
+        {
+            try
+            {
+                File.AppendAllText(_logPath, jsonLine);
+            }
+            catch (IOException ex)
+            {
+                // Fail silently for logging - don't break the main flow
+                Console.Error.WriteLine($"AuditLogger write failed: {ex.Message}");
+            }
+        }
     }
 
     private static object? Mask(object? input)
