@@ -215,10 +215,16 @@ public class McpController : ControllerBase
         if (result.Success)
         {
             // Standardize tool result as MCP content format
+            // 使用 UnsafeRelaxedJsonEscaping 避免非 ASCII 字符被轉義為 \u00xx
+            var serializeOptions = new JsonSerializerOptions
+            {
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            };
+            
             var contentText = result.Result switch
             {
                 string str => str,
-                object obj => JsonSerializer.Serialize(obj),
+                object obj => JsonSerializer.Serialize(obj, serializeOptions),
                 _ => ""
             };
 

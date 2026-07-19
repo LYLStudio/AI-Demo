@@ -75,8 +75,9 @@ public class StockInfoTool : ITool
                     data = items.Select(x => new
                     {
                         x.ChannelId,
-                        Name = $"base64|{Convert.ToBase64String(Encoding.UTF8.GetBytes($"{x.Name}"))}|base64",
-                        FullName = $"base64|{Convert.ToBase64String(Encoding.UTF8.GetBytes($"{x.FullName}"))}|base64",
+                        // 直接返回純文字，MCP Controller 已使用 UnsafeRelaxedJsonEscaping
+                        Name = x.Name,
+                        FullName = x.FullName,
                         x.Open,
                         x.High,
                         x.Low,
