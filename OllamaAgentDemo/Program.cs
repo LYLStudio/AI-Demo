@@ -1,8 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
 using OllamaAgentDemo.Models;
 using OllamaAgentDemo.Services;
 using OllamaAgentDemo.Tools;
@@ -11,26 +13,52 @@ namespace OllamaAgentDemo;
 
 class Program
 {
-  private const string ModelName = "gemma4:26b-mlx"; // 根據環境設定可能需要調整
-  private const string McpServerUrl = "http://127.0.0.1:5209";
-
   static async Task Main(string[] args)
   {
-    Console.WriteLine("=== C# AI Agent Demo (Refactored) ===");
+    // 1. 載入設定檔
+    var configuration = BuildConfiguration();
+
+    // 從設定檔讀取參數（禁止 hardcode，必須由設定檔或環境變數提供）
+    string? modelName = configuration["Agent:Model"];
+    string? mcpServerUrl = configuration["McpServer:BaseUrl"];
+    string? ollamaFullUrl = configuration["Ollama:FullUrl"];
+
+    // 驗證必要設定是否存在
+    if (string.IsNullOrEmpty(modelName))
+    {
+      Console.Error.WriteLine("錯誤：缺少 'Agent:Model' 設定。請在 appsettings.json 或環境變數中提供。");
+      Environment.Exit(1);
+    }
+
+    if (string.IsNullOrEmpty(mcpServerUrl))
+    {
+      Console.Error.WriteLine("錯誤：缺少 'McpServer:BaseUrl' 設定。請在 appsettings.json 或環境變數中提供。");
+      Environment.Exit(1);
+    }
+
+    if (string.IsNullOrEmpty(ollamaFullUrl))
+    {
+      Console.Error.WriteLine("錯誤：缺少 'Ollama:FullUrl' 設定。請在 appsettings.json 或環境變數中提供。");
+      Environment.Exit(1);
+    }
+
+    Console.WriteLine("=== C# AI Agent Demo (Configured) ===");
+    Console.WriteLine($"模型: {modelName}");
+    Console.WriteLine($"MCP Server: {mcpServerUrl}");
+    Console.WriteLine($"Ollama API: {ollamaFullUrl}");
     Console.WriteLine("輸入 'exit' 或 'quit' 來結束對話。");
 
-    // 1. 初始化依賴項 (Dependency Injection 風格)
+    // 2. 初始化依賴項 (Dependency Injection 風格)
     using var httpClient = new HttpClient();
-    string ollamaUrl = "http://localhost:11434/api/chat";
 
-    var ollamaService = new OllamaService(httpClient, ollamaUrl);
+    var ollamaService = new OllamaService(httpClient, ollamaFullUrl);
 
     // 從 MCP Server API 動態取得工具清單並初始化
-    var tools = await DiscoverToolsFromMcpServerAsync(httpClient, McpServerUrl);
+    var tools = await DiscoverToolsFromMcpServerAsync(httpClient, mcpServerUrl);
 
     var agentService = new AgentService(ollamaService, tools);
 
-    // 2. 初始化對話紀錄 (System Prompt，動態根據工具清單產生)
+    // 3. 初始化對話紀錄 (System Prompt，動態根據工具清單產生)
     var toolDescriptions = string.Join("\n", tools.Select(t => $"- {t.Name}"));
     var history = new List<ChatMessage>
            {
@@ -46,7 +74,7 @@ class Program
 當收到工具的回傳結果後，請根據該結果給出最終的自然語言回答。" }
            };
 
-    // 3. 主迴圈
+    // 4. 主迴圈
     while (true)
     {
       Console.Write("\n[User]: ");
@@ -64,7 +92,7 @@ class Program
       history.Add(new ChatMessage { Role = "user", Content = userInput });
 
       // 使用 Agent Service 執行推理與工具調用循環
-      await agentService.RunConversationAsync(history, ModelName);
+      await agentService.RunConversationAsync(history, modelName);
 
       // 印出最後一則訊息 (AI 的最終回答)
       if (history.Count > 0)
@@ -79,17 +107,42 @@ class Program
   }
 
   /// <summary>
+  /// 建構配置物件，支援 appsettings.json 和環境變數。
+  /// </summary>
+  private static IConfiguration BuildConfiguration()
+  {
+    var builder = new ConfigurationBuilder()
+        .SetBasePath(Directory.GetCurrentDirectory())
+        .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+        .AddJsonFile($"appsettings.{GetEnvironmentName()}.json", optional: true)
+        .AddEnvironmentVariables();
+
+    return builder.Build();
+  }
+
+  /// <summary>
+  /// 獲取當前環境名稱。
+  /// </summary>
+  private static string GetEnvironmentName()
+  {
+    return Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") 
+        ?? Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT") 
+        ?? throw new InvalidOperationException("無法取得環境變數 DOTNET_ENVIRONMENT 或 ASPNETCORE_ENVIRONMENT。");
+  }
+
+  /// <summary>
   /// 從 MCP Server API 取得工具清單並初始化對應的 McpTool 實例。
   /// </summary>
   private static async Task<List<ITool>> DiscoverToolsFromMcpServerAsync(HttpClient httpClient, string serverUrl)
   {
     try
     {
-      var response = await httpClient.GetAsync($"{serverUrl}/mcp/tools");
+      var toolsEndpoint = $"{serverUrl}/mcp/tools";
+      var response = await httpClient.GetAsync(toolsEndpoint);
 
       if (!response.IsSuccessStatusCode)
       {
-        Console.WriteLine($"Error: Failed to fetch tools from MCP Server ({serverUrl}/mcp/tools): {response.StatusCode}");
+        Console.WriteLine($"Error: Failed to fetch tools from MCP Server ({toolsEndpoint}): {response.StatusCode}");
         throw new InvalidOperationException("Cannot initialize without MCP Server.");
       }
 
