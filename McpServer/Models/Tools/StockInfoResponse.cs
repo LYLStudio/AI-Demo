@@ -49,9 +49,9 @@ public class QueryTimeInfo
     public bool ShowChart { get; set; }
 
     [JsonPropertyName("sessionFromTime")]
-        public int? SessionFromTime { get; set; }
+    public int SessionFromTime { get; set; }
 
-        [JsonPropertyName("sessionLatestTime")]
+    [JsonPropertyName("sessionLatestTime")]
     public int SessionLatestTime { get; set; }
 }
 
